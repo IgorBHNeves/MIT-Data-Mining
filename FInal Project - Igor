@@ -1,0 +1,157 @@
+####Final project Data Mining#####
+
+####
+####Logistic Regression######
+
+
+library(tidyverse)
+library(caret)
+install.packages("leaps")
+library(leaps)
+install.packages("bestglm")
+library(bestglm)
+
+train.df <- read.csv("basetrain2.csv")
+valid.df <- read.csv("basevalid2.csv")
+
+head(train.df$positive.review, 5)
+
+which( colnames(train.df)=="positive.review" )
+
+#Trials for dimension/base reduction
+#bestglm(train.df, IC="BIC", family = binomial, nvmax = 10)
+#bestglm(train.df, IC="AIC", family = binomial, nvmax = 10)
+#str(train.df)
+#regsubsets(positive.review ~ ., data = train.df, nbest = 1, nvmax = 100, method = "forward", really.big=T)
+
+logit.reg <-glm(positive.review ~ ., 
+          data = train.df, family = "binomial")
+
+#Exaustive search <- not possible/optimal, computationally too taxing
+#logit.reg.exhaustive <- regsubsets(positive.review ~ ., data = train.df, nbest = 1, nvmax = 200, method = "exhaustive", really.big=T)
+
+logit.reg.backward <- step(logit.reg, direction = "backward")
+
+##have to create a null one...
+##Step forward -> worked! 
+
+logit.reg.forward.null <- glm(positive.review~1, data = train.df)
+logit.reg.forward <- step(logit.reg, scope=list(lower=logit.reg.forward.null, upper=logit.reg), direction = "forward")
+summary(logit.reg.forward)
+
+
+## Number of dependant variables left after step "forward"
+length(coef(logit.reg.forward))-1
+
+##Step function did not work, reg too big....
+logit.reg.step <- step(logit.reg, direction = "both")
+
+## trial with StepAIC limiting steps -- still, did not work for stepwise - database too big
+
+library(MASS)
+logit.reg.step.2 <- stepAIC(logit.reg, 
+        direction = c("both"),
+        keep = NULL, steps = 1000, use.start = FALSE,
+        k = 2)
+
+## Going forward with the step "forward model"
+
+Pred.reg <- predict(logit.reg.forward, valid.df, type = "response")
+Pred.reg
+threshold <- 0.5
+predicted.classifications <- as.integer((Pred.reg >= threshold))
+actual.classifications <- valid.df$positive.review
+
+
+reg.cm <- confusionMatrix(as.factor(predicted.classifications), as.factor(actual.classifications))
+reg.cm
+
+#######Trimming down databse for computationally optimal new model
+#######
+
+topvars <- c("great","delici","amaz","ask","love","excel","best","perfect","awesom","favorit","said","atmospher","positive.review")
+
+train.sc <- train.df[,topvars]
+valid.sc <- valid.df[,topvars]
+
+set.seed(1)
+train.index <- sample(row.names(train.sc), 0.4 * nrow(train.sc))
+valid.index <- sample(row.names(valid.sc), 0.4 * nrow(valid.sc))
+
+train.sc2 <- train.sc[train.index, ]
+valid.sc2 <- valid.sc[valid.index, ]
+
+logit.reg.sc2 <-glm(positive.review ~ ., 
+                data = train.sc2, family = "binomial")
+
+summary(logit.reg.sc2)
+
+logit.reg.sc2.step <- step(logit.reg.sc2, direction = "both")
+
+summary(logit.reg.sc2.step)
+
+Pred.reg.sc2 <- predict(logit.reg.sc2.step, valid.sc2, type = "response")
+Pred.reg.sc2
+threshold <- 0.5
+predicted.classifications.sc2 <- as.integer((Pred.reg.sc2 >= threshold))
+actual.classifications.sc2 <- valid.sc2$positive.review
+
+
+reg.cm <- confusionMatrix(as.factor(predicted.classifications.sc2), as.factor(actual.classifications.sc2))
+reg.cm
+
+########################### KNN ##########################
+library(tidyverse)
+library(caret)
+library(FNN)
+library(class)
+
+train.df <- read.csv("basetrain2.csv")
+valid.df <- read.csv("basevalid2.csv")
+
+topvars <- c("great","delici","amaz","ask","love","excel","best","perfect","awesom","favorit","said","atmospher","positive.review")
+train.sc <- train.df[,topvars]
+valid.sc <- valid.df[,topvars]
+
+set.seed(1)
+train.index <- sample(row.names(train.sc), 0.4 * nrow(train.sc))
+valid.index <- sample(row.names(valid.sc), 0.4 * nrow(valid.sc))
+
+train.sc2 <- train.sc[train.index, ]
+valid.sc2 <- valid.sc[valid.index, ]
+
+which( colnames(train.sc2)=="positive.review" )
+
+train.norm.sc2 <- train.sc2
+valid.norm.sc2 <- valid.sc2
+
+##Pre-process data - scale
+norm.values <- preProcess(train.df[, 1:12], method=c("center", "scale"))
+train.norm.sc2[, 1:12] <- predict(norm.values, train.df[, 1:12])
+valid.norm.sc2[, 1:12] <- predict(norm.values, valid.df[, 1:12])
+
+##Finding best k
+
+library(caret)
+
+# initialize a data frame with two columns: k, and accuracy.
+accuracy.df <- data.frame(k = seq(1,14,1), accuracy = rep(0, 2))
+head(valid.norm.sc2)
+
+valid.norm.sc2.factor <-  as.factor(valid.norm.sc2[, 13])
+# computing knn for different k on validation.
+for(i in 1:14) {
+  knn.pred <- class::knn(train.norm.sc2[, -13], valid.norm.sc2[, -13], 
+                  cl = train.norm.sc2[, 13], k = i)
+  accuracy.df[i, 2] <- confusionMatrix(knn.pred, valid.norm.sc2.factor)$overall[1]
+}
+accuracy.df
+
+## Found Best k = 11 -> re-do analysis with the best k 
+
+knn.pred2 <- class::knn(train.norm.sc2[, -13], valid.norm.sc2[, -13], 
+                        cl = train.norm.sc2[, 13], k = 11)
+knn.pred2
+
+##Creating a confusion matrix using the new prediction on the main colum 13 (positive.reviews) as factor of the validation data. 
+confusionMatrix(knn.pred2, valid.norm.sc2.factor)
